@@ -60,7 +60,6 @@ def fetch_td_series(symbol, interval, outputsize=500):
         "outputsize": outputsize,
         "format": "JSON",
         "apikey": TD_APIKEY,
-        # TwelveData may accept 'timezone' param; keep it but we'll normalize anyway
         "timezone": "Asia/Kolkata"
     }
     try:
@@ -88,37 +87,33 @@ def fetch_td_series(symbol, interval, outputsize=500):
         logger.warning("TD returned empty values for %s %s", symbol, interval)
         return None
 
-    # Find a datetime-like column name
+    # Find datetime-like column
     dt_col = None
     for candidate in ['datetime', 'date', 'time', 'timestamp']:
         if candidate in df.columns:
             dt_col = candidate
             break
     if dt_col is None:
-        # try to find any column that looks like a datetime (contains 'time' or 'date')
         dt_col = next((c for c in df.columns if 'time' in c.lower() or 'date' in c.lower()), None)
     if dt_col is None:
         logger.warning("TD response missing datetime-like column: %s", df.columns.tolist())
         return None
 
-    # Parse datetime robustly
     df['datetime'] = pd.to_datetime(df[dt_col], errors='coerce')
     if df['datetime'].isna().all():
         logger.warning("TD datetime parse failed sample: %s", df[dt_col].head().tolist())
         return None
 
-    # Localize / convert to IST (ensure tz-aware index)
+    # Ensure tz-aware in IST
     try:
-        # If naive datetimes: localize to Asia/Kolkata
         if df['datetime'].dt.tz is None:
             df['datetime'] = df['datetime'].dt.tz_localize('Asia/Kolkata')
         else:
             df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
     except Exception:
-        # fallback: attempt to force-parse strings to tz-aware
         df['datetime'] = pd.to_datetime(df[dt_col], utc=True, errors='coerce').dt.tz_convert('Asia/Kolkata')
 
-    # Normalize column names: map common keys to Open/High/Low/Close/Volume
+    # Normalize OHLC/Volume column names
     mapping = {}
     for src in ['open','Open','o','OPEN']:
         if src in df.columns and 'Open' not in df.columns:
@@ -129,10 +124,9 @@ def fetch_td_series(symbol, interval, outputsize=500):
     for src in ['low','Low','l','LOW']:
         if src in df.columns and 'Low' not in df.columns:
             mapping[src] = 'Low'
-    for src in ['close','Close','c','CLOSE','close']:
+    for src in ['close','Close','c','CLOSE']:
         if src in df.columns and 'Close' not in df.columns:
             mapping[src] = 'Close'
-    # Volume optional
     for src in ['volume','Volume','v','VOLUME']:
         if src in df.columns and 'Volume' not in df.columns:
             mapping[src] = 'Volume'
@@ -140,7 +134,7 @@ def fetch_td_series(symbol, interval, outputsize=500):
     if mapping:
         df = df.rename(columns=mapping)
 
-    # Ensure Volume exists (fill NaN if missing)
+    # Ensure Volume exists
     if 'Volume' not in df.columns:
         df['Volume'] = float('nan')
 
