@@ -296,3 +296,13 @@ if __name__ == "__main__":
     from threading import Thread
     Thread(target=main_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
+
+
+# ===============================
+# TEST ROUTE (FOR TELEGRAM CHECK)
+# ===============================
+@app.route("/test")
+def test_message():
+    send_telegram("Test message: Cloud SLRM bot is connected ✔️")
+    return {"ok": True, "msg": "Test sent"}
+
