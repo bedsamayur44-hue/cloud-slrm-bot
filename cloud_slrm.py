@@ -40,6 +40,10 @@ def telegram_send(text):
         logger.exception("Telegram send exception: %s", e)
 
 def fetch_td_series(symbol, interval, outputsize=500):
+    """
+    Fetch time-series from TwelveData and return a tz-aware DataFrame.
+    This version tolerates missing 'volume' field and non-standard responses.
+    """
     base = "https://api.twelvedata.com/time_series"
     params = {
         "symbol": symbol,
@@ -58,16 +62,65 @@ def fetch_td_series(symbol, interval, outputsize=500):
         logger.warning("TD response missing values: %s", j)
         return None
 
+    # Build DataFrame from values (values are dictionaries)
     df = pd.DataFrame(j["values"])
-    df['datetime'] = pd.to_datetime(df['datetime'])
-    df['datetime'] = df['datetime'].dt.tz_localize('Asia/Kolkata')
-    df = df.rename(columns={"datetime":"time","open":"Open",
-                            "high":"High","low":"Low","close":"Close",
-                            "volume":"Volume"})
-    df = df.set_index('time').sort_index()
+    if df.empty:
+        logger.warning("TD returned empty values for %s %s", symbol, interval)
+        return None
 
+    # Ensure datetime column exists and convert to timezone-aware IST
+    if 'datetime' not in df.columns:
+        # some responses may use 'datetime' or 'date' — try common alternatives
+        dt_col = next((c for c in df.columns if 'date' in c.lower()), None)
+        if dt_col is None:
+            logger.warning("TD response missing datetime-like column: %s", df.columns)
+            return None
+        df['datetime'] = df[dt_col]
+
+    df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+    # If conversion failed, bail out
+    if df['datetime'].isna().all():
+        logger.warning("TD datetime parse failed: %s", df['datetime'].head().tolist())
+        return None
+
+    # localize to IST (make tz-aware)
+    try:
+        df['datetime'] = df['datetime'].dt.tz_localize('Asia/Kolkata')
+    except Exception:
+        # if already tz-aware, convert to IST
+        df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
+
+    # rename columns we need (open/high/low/close may be lowercase)
+    mapping = {}
+    for src in ['open','Open','o']:
+        if src in df.columns and 'Open' not in df.columns:
+            mapping[src] = 'Open'
+    for src in ['high','High','h']:
+        if src in df.columns and 'High' not in df.columns:
+            mapping[src] = 'High'
+    for src in ['low','Low','l']:
+        if src in df.columns and 'Low' not in df.columns:
+            mapping[src] = 'Low'
+    for src in ['close','Close','c']:
+        if src in df.columns and 'Close' not in df.columns:
+            mapping[src] = 'Close'
+    # volume is optional
+    if 'volume' in df.columns and 'Volume' not in df.columns:
+        mapping['volume'] = 'Volume'
+    df = df.rename(columns=mapping)
+
+    # If Volume is missing, create it as NaN so later code can safely reference it
+    if 'Volume' not in df.columns:
+        df['Volume'] = float('nan')
+
+    # set index and coerce numeric types
+    df = df.rename(columns={"datetime":"time"}).set_index('time').sort_index()
     for c in ['Open','High','Low','Close','Volume']:
-        df[c] = pd.to_numeric(df[c], errors='coerce')
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+        else:
+            # ensure column exists
+            df[c] = float('nan')
 
     return df
 
