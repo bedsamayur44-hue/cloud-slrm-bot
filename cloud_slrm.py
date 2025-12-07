@@ -292,17 +292,20 @@ def main_loop():
         run_once()
         time.sleep(POLL_SECONDS)
 
-if __name__ == "__main__":
-    from threading import Thread
-    Thread(target=main_loop, daemon=True).start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
-
-
 # ===============================
 # TEST ROUTE (FOR TELEGRAM CHECK)
 # ===============================
 @app.route("/test")
 def test_message():
-    send_telegram("Test message: Cloud SLRM bot is connected ✔️")
-    return {"ok": True, "msg": "Test sent"}
+    try:
+        # use the existing helper to send telegram messages
+        telegram_send("Test message: Cloud SLRM bot is connected ✔️")
+        return {"ok": True, "msg": "Test sent"}
+    except Exception as e:
+        # return error to browser so we can debug easily
+        return {"ok": False, "error": str(e)}
 
+if __name__ == "__main__":
+    from threading import Thread
+    Thread(target=main_loop, daemon=True).start()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
