@@ -321,6 +321,36 @@ def show_signals():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+# ===============================
+# ROUTE: force a realistic sample signal (for testing)
+# ===============================
+@app.route("/force_signal")
+def force_signal():
+    try:
+        sample = {
+            'entry_time': datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S"),
+            'direction': 'buy',
+            'entry': 2100.50,
+            'sl': 2098.50,
+            'tp': 2110.50
+        }
+        msg = (f"*SLRM Cloud Signal (FORCED)*\nSymbol: {SYMBOL}\nDirection: {sample['direction']}\n"
+               f"Entry: {sample['entry']}\nSL: {sample['sl']}\nTP: {sample['tp']}\nTime(IST): {sample['entry_time']}")
+        telegram_send(msg)
+        # append to CSV as well so /signals shows it
+        row = {'id': f"FORCE_{sample['entry_time']}_{sample['direction']}", 'ts': sample['entry_time'],
+               'symbol': SYMBOL, 'direction': sample['direction'], 'entry': sample['entry'],
+               'sl': sample['sl'], 'tp': sample['tp']}
+        exists = os.path.exists(CSV_FILE)
+        with open(CSV_FILE, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=row.keys())
+            if not exists: w.writeheader()
+            w.writerow(row)
+        return {"ok": True, "msg": "Forced signal sent"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 
 if __name__ == "__main__":
     from threading import Thread
