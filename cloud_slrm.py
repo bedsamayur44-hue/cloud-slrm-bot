@@ -305,6 +305,23 @@ def test_message():
         # return error to browser so we can debug easily
         return {"ok": False, "error": str(e)}
 
+# ===============================
+# ROUTE: show recent signals
+# ===============================
+@app.route("/signals")
+def show_signals():
+    try:
+        if not os.path.exists(CSV_FILE):
+            return {"ok": True, "signals": []}
+        import pandas as _pd
+        df = _pd.read_csv(CSV_FILE)
+        # return last 20 rows as JSON
+        last = df.tail(20).to_dict(orient="records")
+        return {"ok": True, "count": len(last), "signals": last}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     from threading import Thread
     Thread(target=main_loop, daemon=True).start()
