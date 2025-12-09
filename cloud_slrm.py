@@ -356,3 +356,92 @@ if __name__ == "__main__":
     from threading import Thread
     Thread(target=main_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
+
+# ===============================
+# DEBUG ROUTE: inspect levels / sweeps for a given date (YYYY-MM-DD)
+# Example: /inspect?date=2025-12-08
+# ===============================
+from flask import request
+
+@app.route("/inspect")
+def inspect_date():
+    qd = request.args.get("date", None)
+    try:
+        if qd is None:
+            return {"ok": False, "error": "missing date param, format YYYY-MM-DD"}, 400
+        day = pd.to_datetime(qd).date()
+        # fetch data fresh
+        df15 = fetch_td_series(SYMBOL, "15min", outputsize=2000)
+        df1  = fetch_td_series(SYMBOL, "1min", outputsize=2000)
+        if df15 is None or df1 is None:
+            return {"ok": False, "error": "data fetch failed"}, 500
+
+        # compute PDH / PDL (from previous day)
+        prev = day - timedelta(days=1)
+        prev_df15 = df15[df15.index.date == prev]
+        if prev_df15.empty:
+            return {"ok": False, "error": f"no 15m data for previous day {prev}"}
+        PDH = float(prev_df15["High"].max())
+        PDL = float(prev_df15["Low"].min())
+
+        # session window used (for LONDON session code we used london_open_window_ist)
+        if SESSION == "LONDON":
+            start_ist, end_ist = london_open_window_ist(day)
+        else:
+            # fallback: use london
+            start_ist, end_ist = london_open_window_ist(day)
+
+        window_1m = df1[(df1.index >= start_ist - timedelta(minutes=60)) & (df1.index <= end_ist + timedelta(minutes=60))]
+        window_15m = df15[df15.index.date == day]
+
+        # detect sweeps in the 1m window (simple report)
+        highs = window_1m["High"].to_numpy() if not window_1m.empty else np.array([])
+        lows  = window_1m["Low"].to_numpy() if not window_1m.empty else np.array([])
+        times = window_1m.index.to_list()
+
+        sweep_above_idxs = np.where(highs > PDH)[0].tolist() if highs.size>0 else []
+        sweep_below_idxs = np.where(lows < PDL)[0].tolist() if lows.size>0 else []
+
+        # summary for first few candles around first sweep events
+        first_above = sweep_above_idxs[0] if len(sweep_above_idxs)>0 else None
+        first_below = sweep_below_idxs[0] if len(sweep_below_idxs)>0 else None
+
+        def sample_slice(idx):
+            if idx is None:
+                return None
+            i0 = max(0, idx-5); i1 = min(len(times)-1, idx+5)
+            rows = []
+            for i in range(i0, i1+1):
+                rows.append({
+                    "t": str(times[i]),
+                    "o": float(window_1m["Open"].iloc[i]),
+                    "h": float(window_1m["High"].iloc[i]),
+                    "l": float(window_1m["Low"].iloc[i]),
+                    "c": float(window_1m["Close"].iloc[i])
+                })
+            return rows
+
+        result = {
+            "ok": True,
+            "date": str(day),
+            "session_start_ist": str(start_ist),
+            "session_end_ist": str(end_ist),
+            "PDH": PDH,
+            "PDL": PDL,
+            "bias_15m_sample": None,
+            "first_sweep_above_idx": first_above,
+            "first_sweep_below_idx": first_below,
+            "sweep_above_sample": sample_slice(first_above),
+            "sweep_below_sample": sample_slice(first_below),
+            "window_1m_count": len(window_1m),
+            "window_15m_count": len(window_15m),
+            "15m_closes_recent": list(window_15m["Close"].tail(6).astype(float))
+        }
+        # compute 15m bias if possible
+        if not window_15m.empty and len(window_15m)>=3:
+            s = float(window_15m["Close"].iloc[-1]) - float(window_15m["Close"].iloc[-3])
+            result["bias_15m_sample"] = "bull" if s>0 else "bear"
+        return result
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
